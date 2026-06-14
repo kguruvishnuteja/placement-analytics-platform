@@ -1,0 +1,41 @@
+# ─── .NET ─────────────────────────────────────────────────────────────────────
+backend/**/bin/
+backend/**/obj/
+backend/**/*.user
+backend/**/*.suo
+backend/**/.vs/
+backend/**/logs/
+backend/**/uploads/
+backend/**/appsettings.Production.json
+
+# EF migrations (keep source, ignore runtime artifacts)
+backend/**/Migrations/*.designer.cs
+
+# ─── Node / Frontend ──────────────────────────────────────────────────────────
+frontend/node_modules/
+frontend/dist/
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# ─── Docker secrets ───────────────────────────────────────────────────────────
+docker/.env
+docker/secrets/
+
+# ─── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── IDE ──────────────────────────────────────────────────────────────────────
+.idea/
+.vscode/settings.json
+*.swp
+*.swo
+
+# ─── Secrets (never commit these) ─────────────────────────────────────────────
+**/*.pfx
+**/*.pem
+**/*.key
+**/secrets.json
+**/.env

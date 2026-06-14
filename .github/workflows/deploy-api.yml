@@ -1,0 +1,36 @@
+name: Deploy API → Azure App Service
+
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**']
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    name: Deploy to Azure
+    runs-on: ubuntu-latest
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore & Publish
+        run: |
+          cd backend
+          dotnet restore PlacementAnalytics.sln
+          dotnet publish PlacementAnalytics.API/PlacementAnalytics.API.csproj \
+            -c Release -o ./publish /p:UseAppHost=false
+
+      - name: Deploy to Azure App Service
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: placement-api
+          publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
+          package: backend/publish

@@ -1,0 +1,71 @@
+version: '3.9'
+
+services:
+  # ── SQL Server ──────────────────────────────────────────────────────────────
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: placement_sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      SA_PASSWORD: "PlacementAdmin@2024"
+      MSSQL_PID: Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P "PlacementAdmin@2024" -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - placement_net
+
+  # ── Backend API ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: ../backend
+      dockerfile: ../docker/Dockerfile.api
+    container_name: placement_api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      ConnectionStrings__DefaultConnection: >
+        Server=sqlserver,1433;Database=PlacementAnalyticsDb;
+        User Id=sa;Password=PlacementAdmin@2024;
+        TrustServerCertificate=True;MultipleActiveResultSets=true
+      Jwt__Key: "PlacementAnalyticsSecretKey2024SuperSecureJwtKey!@#$"
+      Jwt__Issuer: "PlacementAnalytics"
+      Jwt__Audience: "PlacementAnalyticsUsers"
+      Frontend__Url: "http://localhost"
+    ports:
+      - "5000:8080"
+    volumes:
+      - api_uploads:/app/uploads
+    networks:
+      - placement_net
+    restart: unless-stopped
+
+  # ── Frontend ─────────────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ../frontend
+      dockerfile: ../docker/Dockerfile.frontend
+    container_name: placement_frontend
+    depends_on:
+      - api
+    ports:
+      - "80:80"
+    networks:
+      - placement_net
+    restart: unless-stopped
+
+volumes:
+  sqlserver_data:
+  api_uploads:
+
+networks:
+  placement_net:
+    driver: bridge

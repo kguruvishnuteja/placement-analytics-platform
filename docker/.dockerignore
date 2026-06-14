@@ -1,0 +1,14 @@
+# Backend
+**/bin/
+**/obj/
+**/.vs/
+**/node_modules/
+**/*.user
+**/*.suo
+
+# Frontend
+**/node_modules/
+**/dist/
+**/.env
+**/.env.local
+**/.DS_Store
