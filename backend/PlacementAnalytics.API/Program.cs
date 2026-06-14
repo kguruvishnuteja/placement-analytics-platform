@@ -1,6 +1,8 @@
 using System.Text;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.OpenApi.Models;
 using PlacementAnalytics.Application.Common.Interfaces;
@@ -13,7 +15,7 @@ using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Serilog
+// ─── Serilog ─────────────────────────────────────────────────────────────────
 Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
@@ -22,17 +24,27 @@ Log.Logger = new LoggerConfiguration()
     .CreateLogger();
 builder.Host.UseSerilog();
 
-// Database
-builder.Services.AddDbContext<AppDbContext>(options =>
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
-        b => b.MigrationsAssembly("PlacementAnalytics.Infrastructure")));
+// ─── Database (Azure SQL or LocalDB) ─────────────────────────────────────────
+var connectionString = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Connection string 'DefaultConnection' not found.");
 
-// Repository & UoW
+builder.Services.AddDbContext<AppDbContext>(options =>
+    options.UseSqlServer(connectionString,
+        sql =>
+        {
+            sql.MigrationsAssembly("PlacementAnalytics.Infrastructure");
+            sql.EnableRetryOnFailure(3, TimeSpan.FromSeconds(5), null);
+        }));
+
+// ─── Health Checks ────────────────────────────────────────────────────────────
+builder.Services.AddHealthChecks()
+    .AddDbContextCheck<AppDbContext>("database");
+
+// ─── Repository + Unit of Work ───────────────────────────────────────────────
 builder.Services.AddScoped(typeof(IRepository<>), typeof(Repository<>));
 builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
-// Application Services
+// ─── Application Services ────────────────────────────────────────────────────
 builder.Services.AddScoped<IAuthService, AuthService>();
 builder.Services.AddScoped<IStudentService, StudentService>();
 builder.Services.AddScoped<ICompanyService, CompanyService>();
@@ -40,9 +52,12 @@ builder.Services.AddScoped<IResumeService, ResumeService>();
 builder.Services.AddScoped<IAnalyticsService, AnalyticsService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<ISkillService, SkillService>();
+builder.Services.AddScoped<IAdminService, AdminService>();
 
-// JWT Authentication
-var jwtKey = builder.Configuration["Jwt:Key"]!;
+// ─── JWT Authentication ───────────────────────────────────────────────────────
+var jwtKey = builder.Configuration["Jwt:Key"]
+    ?? throw new InvalidOperationException("JWT Key not configured.");
+
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
     {
@@ -54,28 +69,31 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             ValidateIssuerSigningKey = true,
             ValidIssuer = builder.Configuration["Jwt:Issuer"],
             ValidAudience = builder.Configuration["Jwt:Audience"],
-            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey))
+            IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+            ClockSkew = TimeSpan.Zero
         };
     });
 
 builder.Services.AddAuthorization();
 
-// CORS
+// ─── CORS ─────────────────────────────────────────────────────────────────────
+var frontendUrl = builder.Configuration["Frontend:Url"] ?? "http://localhost:5173";
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("AllowFrontend", policy =>
     {
         policy.WithOrigins(
-            builder.Configuration["Frontend:Url"] ?? "http://localhost:5173",
-            "https://placement-analytics.vercel.app"
-        )
-        .AllowAnyHeader()
-        .AllowAnyMethod()
-        .AllowCredentials();
+                frontendUrl,
+                "https://placement-analytics.vercel.app",
+                "https://*.vercel.app"
+            )
+            .AllowAnyHeader()
+            .AllowAnyMethod()
+            .AllowCredentials();
     });
 });
 
-// Swagger
+// ─── Swagger (available in all environments for Azure) ────────────────────────
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -83,12 +101,12 @@ builder.Services.AddSwaggerGen(c =>
     {
         Title = "Placement Analytics API",
         Version = "v1",
-        Description = "API for the Placement Analytics & Career Readiness Platform",
+        Description = "REST API for Placement Analytics & Career Readiness Platform",
         Contact = new OpenApiContact { Name = "Placement Team", Email = "admin@placement.edu" }
     });
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
-        Description = "JWT Authorization header. Enter: Bearer {token}",
+        Description = "JWT Bearer token. Format: Bearer {token}",
         Name = "Authorization",
         In = ParameterLocation.Header,
         Type = SecuritySchemeType.ApiKey,
@@ -108,7 +126,7 @@ builder.Services.AddSwaggerGen(c =>
 
 builder.Services.AddControllers();
 
-// File upload size limit (10MB)
+// ─── File upload size (10 MB) ─────────────────────────────────────────────────
 builder.WebHost.ConfigureKestrel(options =>
 {
     options.Limits.MaxRequestBodySize = 10 * 1024 * 1024;
@@ -116,29 +134,40 @@ builder.WebHost.ConfigureKestrel(options =>
 
 var app = builder.Build();
 
-// Seed database
+// ─── Auto-migrate + Seed on startup ──────────────────────────────────────────
 using (var scope = app.Services.CreateScope())
 {
     try
     {
         var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
         await DbSeeder.SeedAsync(db);
+        Log.Information("Database seeded successfully.");
     }
     catch (Exception ex)
     {
-        Log.Error(ex, "Database seeding failed");
+        Log.Error(ex, "Database seeding failed. App will continue.");
     }
 }
 
-if (app.Environment.IsDevelopment())
+// ─── Swagger — always on (protected by Azure auth if needed) ─────────────────
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.UseSwagger();
-    app.UseSwaggerUI(c =>
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Placement Analytics API v1");
+    c.RoutePrefix = string.Empty;   // Swagger at root "/"
+    c.DocumentTitle = "Placement Analytics API";
+});
+
+// ─── Health check endpoint ───────────────────────────────────────────────────
+app.MapHealthChecks("/health", new HealthCheckOptions
+{
+    ResultStatusCodes =
     {
-        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Placement Analytics API v1");
-        c.RoutePrefix = string.Empty;
-    });
-}
+        [HealthStatus.Healthy]   = StatusCodes.Status200OK,
+        [HealthStatus.Degraded]  = StatusCodes.Status200OK,
+        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
+    }
+});
 
 app.UseHttpsRedirection();
 app.UseSerilogRequestLogging();
@@ -146,7 +175,7 @@ app.UseCors("AllowFrontend");
 app.UseAuthentication();
 app.UseAuthorization();
 
-// Global exception handler
+// ─── Global exception handler ────────────────────────────────────────────────
 app.UseMiddleware<PlacementAnalytics.API.Middleware.GlobalExceptionMiddleware>();
 
 app.MapControllers();

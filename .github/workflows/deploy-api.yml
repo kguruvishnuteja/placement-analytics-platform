@@ -3,34 +3,72 @@ name: Deploy API → Azure App Service
 on:
   push:
     branches: [main]
-    paths: ['backend/**']
+    paths:
+      - 'backend/**'
+      - '.github/workflows/deploy-api.yml'
   workflow_dispatch:
 
+env:
+  AZURE_WEBAPP_NAME: placement-analytics-api   # Change to your Azure App Service name
+  DOTNET_VERSION: '8.0.x'
+
 jobs:
-  deploy:
-    name: Deploy to Azure
+  build-and-deploy:
+    name: Build & Deploy to Azure
     runs-on: ubuntu-latest
     environment: production
 
     steps:
-      - name: Checkout
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      # ── 2. Setup .NET ─────────────────────────────────────────────────────────
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Restore & Publish
+      # ── 3. Cache NuGet ────────────────────────────────────────────────────────
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('backend/**/*.csproj') }}
+          restore-keys: ${{ runner.os }}-nuget-
+
+      # ── 4. Restore ────────────────────────────────────────────────────────────
+      - name: Restore dependencies
+        run: dotnet restore backend/PlacementAnalytics.sln
+
+      # ── 5. Build ──────────────────────────────────────────────────────────────
+      - name: Build solution
         run: |
-          cd backend
-          dotnet restore PlacementAnalytics.sln
-          dotnet publish PlacementAnalytics.API/PlacementAnalytics.API.csproj \
-            -c Release -o ./publish /p:UseAppHost=false
+          dotnet build backend/PlacementAnalytics.sln \
+            --configuration Release \
+            --no-restore
 
+      # ── 6. Publish ────────────────────────────────────────────────────────────
+      - name: Publish API
+        run: |
+          dotnet publish backend/PlacementAnalytics.API/PlacementAnalytics.API.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./publish \
+            /p:UseAppHost=false
+
+      # ── 7. Deploy to Azure App Service ───────────────────────────────────────
       - name: Deploy to Azure App Service
         uses: azure/webapps-deploy@v3
         with:
-          app-name: placement-api
+          app-name: ${{ env.AZURE_WEBAPP_NAME }}
           publish-profile: ${{ secrets.AZURE_WEBAPP_PUBLISH_PROFILE }}
-          package: backend/publish
+          package: ./publish
+
+      # ── 8. Health check after deploy ─────────────────────────────────────────
+      - name: Verify deployment health
+        run: |
+          sleep 30
+          curl --fail \
+            "https://${{ env.AZURE_WEBAPP_NAME }}.azurewebsites.net/health" \
+            || echo "Health check failed — check Azure logs"

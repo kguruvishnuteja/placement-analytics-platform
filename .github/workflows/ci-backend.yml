@@ -3,49 +3,59 @@ name: Backend CI
 on:
   push:
     branches: [main, develop]
-    paths: ['backend/**']
+    paths: ['backend/**', '.github/workflows/ci-backend.yml']
   pull_request:
     branches: [main]
     paths: ['backend/**']
 
+env:
+  DOTNET_VERSION: '8.0.x'
+
 jobs:
   build:
-    name: Build & Test
+    name: Build & Validate
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Setup .NET 8
+      - name: Setup .NET ${{ env.DOTNET_VERSION }}
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '8.0.x'
+          dotnet-version: ${{ env.DOTNET_VERSION }}
 
       - name: Cache NuGet packages
         uses: actions/cache@v4
         with:
           path: ~/.nuget/packages
-          key: ${{ runner.os }}-nuget-${{ hashFiles('**/PlacementAnalytics.*.csproj') }}
+          key: ${{ runner.os }}-nuget-${{ hashFiles('backend/**/*.csproj') }}
           restore-keys: ${{ runner.os }}-nuget-
 
       - name: Restore dependencies
-        run: dotnet restore PlacementAnalytics.sln
+        run: dotnet restore backend/PlacementAnalytics.sln
 
-      - name: Build
-        run: dotnet build PlacementAnalytics.sln --no-restore --configuration Release
-
-      - name: Publish API
+      - name: Build (Release)
         run: |
-          dotnet publish PlacementAnalytics.API/PlacementAnalytics.API.csproj \
-            --no-build --configuration Release -o ./publish
+          dotnet build backend/PlacementAnalytics.sln \
+            --configuration Release \
+            --no-restore \
+            -warnaserror
 
-      - name: Upload publish artifact
+      - name: Publish (validate output)
+        run: |
+          dotnet publish backend/PlacementAnalytics.API/PlacementAnalytics.API.csproj \
+            --configuration Release \
+            --no-build \
+            --output ./publish \
+            /p:UseAppHost=false
+
+      - name: Verify publish output
+        run: ls -la ./publish/
+
+      - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: backend-publish
-          path: backend/publish
-          retention-days: 7
+          name: backend-publish-${{ github.sha }}
+          path: ./publish
+          retention-days: 3

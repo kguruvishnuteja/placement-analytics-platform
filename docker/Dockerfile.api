@@ -2,37 +2,42 @@
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 
-# Copy solution and project files first (layer cache for restores)
-COPY ["PlacementAnalytics.sln", "./"]
-COPY ["PlacementAnalytics.API/PlacementAnalytics.API.csproj", "PlacementAnalytics.API/"]
-COPY ["PlacementAnalytics.Application/PlacementAnalytics.Application.csproj", "PlacementAnalytics.Application/"]
-COPY ["PlacementAnalytics.Domain/PlacementAnalytics.Domain.csproj", "PlacementAnalytics.Domain/"]
-COPY ["PlacementAnalytics.Infrastructure/PlacementAnalytics.Infrastructure.csproj", "PlacementAnalytics.Infrastructure/"]
+# Copy project files first for better layer caching
+COPY PlacementAnalytics.Domain/PlacementAnalytics.Domain.csproj                     PlacementAnalytics.Domain/
+COPY PlacementAnalytics.Application/PlacementAnalytics.Application.csproj           PlacementAnalytics.Application/
+COPY PlacementAnalytics.Infrastructure/PlacementAnalytics.Infrastructure.csproj     PlacementAnalytics.Infrastructure/
+COPY PlacementAnalytics.API/PlacementAnalytics.API.csproj                           PlacementAnalytics.API/
 
-RUN dotnet restore "PlacementAnalytics.sln"
+RUN dotnet restore PlacementAnalytics.API/PlacementAnalytics.API.csproj
 
 # Copy all source
 COPY . .
 
-# Publish optimised release build
-RUN dotnet publish "PlacementAnalytics.API/PlacementAnalytics.API.csproj" \
-    -c Release -o /app/publish /p:UseAppHost=false
+# Publish release build (no self-contained — Azure provides the runtime)
+RUN dotnet publish PlacementAnalytics.API/PlacementAnalytics.API.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore \
+    /p:UseAppHost=false
 
 # ─── Runtime Stage ────────────────────────────────────────────────────────────
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
 
-# Non-root user for security
+# Create non-root user
 RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
 USER appuser
 
 COPY --from=build /app/publish .
 
 # Create upload directory
-RUN mkdir -p uploads/resumes
+RUN mkdir -p uploads/resumes logs
 
 EXPOSE 8080
 ENV ASPNETCORE_URLS=http://+:8080
 ENV ASPNETCORE_ENVIRONMENT=Production
+
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
 
 ENTRYPOINT ["dotnet", "PlacementAnalytics.API.dll"]
