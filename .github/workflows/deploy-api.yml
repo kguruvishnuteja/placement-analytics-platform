@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 env:
-  AZURE_WEBAPP_NAME: placement-analytics-api   # Change to your Azure App Service name
+  AZURE_WEBAPP_NAME: placement-analytics-api-2024   # matches azure-setup.ps1 $APP_NAME
   DOTNET_VERSION: '8.0.x'
 
 jobs:
