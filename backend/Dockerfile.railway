@@ -1,0 +1,38 @@
+# ─── Build Stage ─────────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
+WORKDIR /src
+
+# Copy project files for layer caching
+COPY PlacementAnalytics.Domain/PlacementAnalytics.Domain.csproj             PlacementAnalytics.Domain/
+COPY PlacementAnalytics.Application/PlacementAnalytics.Application.csproj   PlacementAnalytics.Application/
+COPY PlacementAnalytics.Infrastructure/PlacementAnalytics.Infrastructure.csproj PlacementAnalytics.Infrastructure/
+COPY PlacementAnalytics.API/PlacementAnalytics.API.csproj                   PlacementAnalytics.API/
+
+RUN dotnet restore PlacementAnalytics.API/PlacementAnalytics.API.csproj
+
+# Copy all source files
+COPY . .
+
+# Publish to /app/publish
+RUN dotnet publish PlacementAnalytics.API/PlacementAnalytics.API.csproj \
+    -c Release \
+    -o /app/publish \
+    --no-restore \
+    /p:UseAppHost=false
+
+# ─── Runtime Stage ────────────────────────────────────────────────────────────
+FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+WORKDIR /app
+
+# Create upload + logs directories
+RUN mkdir -p uploads/resumes logs
+
+COPY --from=build /app/publish .
+
+# Railway injects PORT env variable
+ENV ASPNETCORE_URLS=http://+:${PORT:-8080}
+ENV ASPNETCORE_ENVIRONMENT=Production
+
+EXPOSE 8080
+
+ENTRYPOINT ["dotnet", "PlacementAnalytics.API.dll"]

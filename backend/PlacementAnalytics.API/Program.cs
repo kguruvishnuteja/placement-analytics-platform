@@ -13,7 +13,10 @@ using PlacementAnalytics.Infrastructure.Repositories;
 using PlacementAnalytics.Infrastructure.Services;
 using Serilog;
 
+// Railway injects PORT env var — bind to it
+var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 var builder = WebApplication.CreateBuilder(args);
+builder.WebHost.UseUrls($"http://0.0.0.0:{port}");
 
 // ─── Serilog ─────────────────────────────────────────────────────────────────
 Log.Logger = new LoggerConfiguration()
@@ -125,12 +128,6 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 builder.Services.AddControllers();
-
-// ─── File upload size (10 MB) ─────────────────────────────────────────────────
-builder.WebHost.ConfigureKestrel(options =>
-{
-    options.Limits.MaxRequestBodySize = 10 * 1024 * 1024;
-});
 
 var app = builder.Build();
 

@@ -3,7 +3,9 @@ name: Deploy Frontend → Vercel
 on:
   push:
     branches: [main]
-    paths: ['frontend/**']
+    paths:
+      - 'frontend/**'
+      - '.github/workflows/deploy-frontend.yml'
   workflow_dispatch:
 
 jobs:
@@ -29,6 +31,7 @@ jobs:
       - name: Build
         run: cd frontend && npm run build
         env:
+          # Set VITE_API_URL to your Railway backend URL after deploying
           VITE_API_URL: ${{ secrets.VITE_API_URL }}
 
       - name: Deploy to Vercel
